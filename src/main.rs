@@ -89,6 +89,7 @@ fn run() -> Result<()> {
     let config = Config::load(&args.config)
         .expect("failed to load config");
 
+    let bind = args.bind.unwrap_or_else(|| String::from("127.0.0.1:8080"));
     let server = HttpServer::new(|| {
         App::new()
             // enable logger
@@ -99,8 +100,7 @@ fn run() -> Result<()> {
             .service(web::resource("/script.js").to(script))
             .service(web::resource("/").to(index))
     })
-    // start http server on 127.0.0.1:8080
-    .bind("0.0.0.0:8080")?;
+    .bind(&bind)?;
 
     ping_loop(config);
     server.run()?;
