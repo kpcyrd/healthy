@@ -1,3 +1,4 @@
+use crate::STATUS;
 use std::collections::HashMap;
 use std::time::Duration;
 use std::mem;
@@ -6,14 +7,14 @@ use serde_derive::{Serialize, Deserialize};
 use actix::prelude::*;
 use actix_broker::BrokerSubscribe;
 
-const HEALTHCHECK_INTERVAL: Duration = Duration::from_secs(3);
+const HEALTHCHECK_INTERVAL: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Message, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Message, Serialize, Deserialize)]
 pub struct PushStatus {
-    entries: Vec<Status>,
+    pub entries: Vec<Status>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     pub name: String,
     pub healthy: bool,
@@ -71,6 +72,11 @@ impl StatusServer {
     }
 
     fn push_status(&mut self, msg: PushStatus) {
+        if Some(&msg) == self.last_msg.as_ref() {
+            debug!("status didn't change, not pushing an update");
+            return;
+        }
+        info!("pushing an update to clients");
         self.last_msg = Some(msg.clone());
 
         let mut failed = 0;
@@ -90,25 +96,7 @@ impl StatusServer {
 
     fn hb(&self, ctx: &mut <Self as Actor>::Context) {
         ctx.run_interval(HEALTHCHECK_INTERVAL, |act, _ctx| {
-            info!("probing");
-
-            let push = PushStatus {
-                entries: vec![
-                    Status {
-                        name: "wifi tunnel (dummy)".to_string(),
-                        healthy: true,
-                    },
-                    Status {
-                        name: "vpn tunnel (dummy)".to_string(),
-                        healthy: true,
-                    },
-                    Status {
-                        name: "vpn exit (dummy)".to_string(),
-                        healthy: false,
-                    },
-                ],
-            };
-
+            let push = STATUS.read().unwrap().clone();
             act.push_status(push);
         });
     }

@@ -1,18 +1,53 @@
-#[macro_use]
-extern crate log;
+#[macro_use] extern crate log;
 
-// use std::time::{Duration, Instant};
+use env_logger::Env;
+use healthy::args::Args;
+use healthy::config::Config;
+use healthy::errors::*;
+use healthy::ping;
+use healthy::push::MyWebSocket;
+use healthy::server::{PushStatus, Status};
+use healthy::STATUS;
+use std::thread;
+use structopt::StructOpt;
 
-// use actix::prelude::*;
-// use actix_broker::BrokerSubscribe;
-use actix_web::{middleware, web, App, Result, HttpRequest, HttpResponse, HttpServer};
+use actix_web::{middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 
-pub mod push;
-use push::MyWebSocket;
-pub mod server;
+fn ping_loop(config: Config) {
+    thread::spawn(move || {
+        loop {
+            debug!("pinging targets");
 
-fn ws_index(r: HttpRequest, stream: web::Payload) -> Result<HttpResponse> {
+            let mut hosts = Vec::new();
+            for target in &config.target {
+                hosts.push(target.host);
+            }
+
+            if let Ok(status) = ping::send(&hosts) {
+                debug!("updating status");
+                let mut push = PushStatus::default();
+
+                for target in &config.target {
+                    if let Some(&healthy) = status.get(&target.host) {
+                        push.entries.push(Status {
+                            name: target.name.clone(),
+                            healthy,
+                        });
+                        hosts.push(target.host);
+                    }
+                }
+
+                let mut w = STATUS.write().unwrap();
+                *w = push;
+            }
+
+            thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
+}
+
+fn ws_index(r: HttpRequest, stream: web::Payload) -> actix_web::Result<HttpResponse> {
     ws::start(MyWebSocket::new(), &r, stream)
 }
 
@@ -39,11 +74,22 @@ fn index(_req: HttpRequest) -> Result<HttpResponse> {
         .body(body))
 }
 
-fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "healthy=info,actix_server=info,actix_web=info");
-    env_logger::init();
+fn run() -> Result<()> {
+    let args = Args::from_args();
 
-    HttpServer::new(|| {
+    let env = match args.verbose {
+        0 => "healthy=info,actix_server=info,actix_web=info",
+        1 => "healthy=debug,actix_server=info,actix_web=info",
+        _ => "debug",
+    };
+
+    env_logger::init_from_env(Env::default()
+        .default_filter_or(env));
+
+    let config = Config::load(&args.config)
+        .expect("failed to load config");
+
+    let server = HttpServer::new(|| {
         App::new()
             // enable logger
             .wrap(middleware::Logger::default())
@@ -54,6 +100,20 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/").to(index))
     })
     // start http server on 127.0.0.1:8080
-    .bind("127.0.0.1:8080")?
-    .run()
+    .bind("0.0.0.0:8080")?;
+
+    ping_loop(config);
+    server.run()?;
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("Error: {}", err);
+        for cause in err.iter_chain().skip(1) {
+            eprintln!("Because: {}", cause);
+        }
+        std::process::exit(1);
+    }
 }

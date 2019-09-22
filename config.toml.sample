@@ -1,0 +1,19 @@
+[[target]]
+name = "1.1.1.1 test"
+host = "1.1.1.1"
+
+[[target]]
+name = "1.0.0.1 test"
+host = "1.0.0.1"
+
+[[target]]
+name = "8.8.8.8 test"
+host = "8.8.8.8"
+
+[[target]]
+name = "8.8.4.4 test"
+host = "8.8.4.4"
+
+[[target]]
+name = "offline test"
+host = "1.2.3.4"
